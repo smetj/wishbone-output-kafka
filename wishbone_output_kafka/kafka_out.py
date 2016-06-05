@@ -22,11 +22,11 @@
 #
 #
 
-# from gevent import monkey; monkey.patch_all()
+from gevent import monkey; monkey.patch_all()
 from gevent.event import Event
+from kafka import KafkaProducer
 from wishbone import Actor
 from wishbone.event import Bulk
-from kafka import KafkaProducer
 from gevent import sleep
 
 
@@ -42,9 +42,9 @@ class MockProducer(object):
 
 class KafkaOut(Actor):
 
-    """**The actor title.**
+    """**Publish data to Kafka.**
 
-    The long description of the Actor
+    Publish data to Kafka.
 
 
     Parameters:
@@ -107,7 +107,6 @@ class KafkaOut(Actor):
             reply = self.producer.send(self.kwargs.topic, data).get(self.kwargs.timeout)
             event.set(reply.partition, "@tmp.%s.partition" % (self.name))
             event.set(reply.offset, "@tmp.%s.offset" % (self.name))
-
 
     def __sendBulk(self, event):
 
