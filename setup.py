@@ -31,7 +31,7 @@ VERSION = '1.0.0'
 
 install_requires = [
     'wishbone>=2.1.1',
-    'kafka==1.2.1',
+    'pykafka',
 ]
 
 try:

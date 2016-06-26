@@ -23,21 +23,22 @@
 #
 
 from gevent import monkey; monkey.patch_all()
+from pykafka import KafkaClient
 from gevent.event import Event
-from kafka import KafkaProducer
 from wishbone import Actor
 from wishbone.event import Bulk
 from gevent import sleep
+from wishbone.utils import ModuleConnectionMock
 
 
-class MockProducer(object):
+# root = logging.getLogger()
+# root.setLevel(logging.DEBUG)
 
-    def __init__(self, logging):
-        self.logging = logging
-
-    def send(self, *args, **kwargs):
-
-        self.logging.warning("Connection not initialized yet.")
+# ch = logging.StreamHandler(sys.stdout)
+# ch.setLevel(logging.DEBUG)
+# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ch.setFormatter(formatter)
+# root.addHandler(ch)
 
 
 class KafkaOut(Actor):
@@ -49,7 +50,7 @@ class KafkaOut(Actor):
 
     Parameters:
 
-        - boostrap_servers(array)(["localhost:9092"])
+        - hosts(array)(["localhost:9092"])
            |  The server to submit data to.
 
         - client_id(str)("wishbone")
@@ -75,56 +76,64 @@ class KafkaOut(Actor):
 
     """
 
-    def __init__(self, actor_config, bootstrap_servers=["localhost:9092"], client_id="wishbone", topic="wishbone", partition=None, selection="@data", timeout=10):
+    def __init__(self, actor_config, hosts=["localhost:9092"], client_id="wishbone", topic="wishbone", partition=None, selection="@data", timeout=10):
         Actor.__init__(self, actor_config)
 
         self.pool.createQueue("inbox")
         self.registerConsumer(self.consume, "inbox")
-        self.connecting = Event()
+        self.setup_connection = Event()
         self.kafka = None
-        self.producer = None
+        self.producer = ModuleConnectionMock("Kafka connection not yet established.")
+        self.client = ModuleConnectionMock("Kafka connection not yet established.")
+        self.topic_producers = {}
 
     def preHook(self):
 
-        self.connecting.set()
+        self.setup_connection.set()
         self.sendToBackground(self.setupConnection)
 
     def consume(self, event):
 
         try:
             if isinstance(event, Bulk):
-                self.__sendBulk(event)
+                for event in event.dumpFieldAsList(self.kwargs.selection):
+                    self.__sendOne(event)
             else:
                 self.__sendOne(event)
         except Exception:
-            self.connecting.set()
+            self.setup_connection.set()
             raise
 
     def __sendOne(self, event):
 
-        if self.producer is not None:
-            data = str(event.get(self.kwargs.selection)).encode()
-            reply = self.producer.send(self.kwargs.topic, data).get(self.kwargs.timeout)
-            event.set(reply.partition, "@tmp.%s.partition" % (self.name))
-            event.set(reply.offset, "@tmp.%s.offset" % (self.name))
-
-    def __sendBulk(self, event):
-
-        for item in event.dumpFieldAsList(self.kwargs.selection):
-            data = str(event.get(self.kwargs.selection).encode())
-            self.producer.send(self.kwargs.topic, data)
-        self.producer.flush()
+        data = str(event.get(self.kwargs.selection)).encode()
+        try:
+            self.getTopicProducer(self.kwargs.topic).produce(data)
+        except Exception as err:
+            self.setup_connection.set()
+            raise Exception("Failed to send message to broker.  Reason: %s" % (err))
 
     def setupConnection(self):
-
+        servers = ",".join(self.kwargs.hosts)
         while self.loop():
-            self.connecting.wait()
+            self.setup_connection.wait()
             while self.loop():
                 try:
-                    self.producer = KafkaProducer(bootstrap_servers=self.kwargs.bootstrap_servers)
-                    self.logging.info("Connected to Kafka on %s:%s." % (list(self.producer._metadata.brokers())[0].host, list(self.producer._metadata.brokers())[0].port))
-                    self.connecting.clear()
+                    self.client = KafkaClient(hosts=servers, use_greenlets=True)
+                    for topic, o in self.topic_producers.items():
+                        self.getTopicProducer(topic)
+                    self.setup_connection.clear()
+                    self.logging.info("Connected to broker.")
                     break
                 except Exception as err:
-                    self.logging.error("Failed to connect to Kafka.  Reason: %s" % (err))
+                    self.logging.error("Failed to connect to broker.  Will retry in 1 second.  Reason: %s" % (err))
                     sleep(1)
+
+    def getTopicProducer(self, topic):
+
+        try:
+            return self.topic_producers[topic]
+        except KeyError:
+            self.topic_producers[topic] = self.client.topics[topic].get_sync_producer()
+            return self.topic_producers[topic]
+

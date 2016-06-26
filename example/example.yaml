@@ -1,0 +1,17 @@
+---
+modules:
+  input:
+    module: wishbone.input.testevent
+    arguments:
+      message : "test"
+      interval: 1
+
+  kafka:
+    module: wishbone.output.kafka
+    arguments:
+      hosts:
+        - kafka-server:9092
+
+routingtable:
+  - input.outbox -> kafka.inbox
+...
