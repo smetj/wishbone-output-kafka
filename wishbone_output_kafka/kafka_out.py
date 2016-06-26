@@ -109,6 +109,7 @@ class KafkaOut(Actor):
         data = str(event.get(self.kwargs.selection)).encode()
         try:
             self.getTopicProducer(self.kwargs.topic).produce(data)
+            event.set(self.kwargs.topic, "@tmp.%s.topic" % (self.name))
         except Exception as err:
             self.setup_connection.set()
             raise Exception("Failed to send message to broker.  Reason: %s" % (err))
